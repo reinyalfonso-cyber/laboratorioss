@@ -288,20 +288,4 @@ cat /root/thefinalflag.txt
 
 &nbsp;
 
-## Correspondencia de capturas
 
-| Nombre sugerido | Captura original |
-| :-- | :-- |
-| 01-nmap-scan.png | Screenshot_2026-10-16_185655.png |
-| 02-searchsploit-drupal.png | Screenshot_2026-10-16_190105.png |
-| 03-exploit-drupalgeddon.png | Screenshot_2026-10-16_190354.png |
-| 04-modulo-php-filter.png | Screenshot_2026-10-16_190536.png |
-| 05-pagina-shell-php.png | Screenshot_2026-10-16_190641.png |
-| 06-flag1.png | Screenshot_2026-10-16_190755.png |
-| 07-settings-php-credenciales.png | Screenshot_2026-10-16_192329.png |
-| 08-mysql-show-tables.png | Screenshot_2026-10-16_194209.png |
-| 09-mysql-tabla-users.png | Screenshot_2026-10-16_194520.png |
-| 10-flag3-nodo-contenido.png | Screenshot_2026-10-16_195251.png |
-| 11-etc-passwd-flag4.png | Screenshot_2026-10-16_195548.png |
-| 12-escalada-find-suid.png | Screenshot_2026-10-16_200024.png |
-| 13-root-flag-final.png | Screenshot_2026-10-16_201104.png |
