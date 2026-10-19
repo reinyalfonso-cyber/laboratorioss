@@ -92,7 +92,6 @@ php 34993.php http://10.0.2.3
 
 El exploit abusó de la inyección SQL en la capa de formularios de Drupal para crear una cuenta con privilegios administrativos, devolviendo credenciales válidas: usuario `admin`, contraseña `admin`.
 
-![Ejecución del exploit Drupalgeddon](./img/03-exploit-drupalgeddon.png)
 
 &nbsp;
 
