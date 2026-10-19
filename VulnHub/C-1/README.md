@@ -4,8 +4,6 @@ Informe de la prueba de intrusión Boot2Root ejecutada sobre la máquina **C-1**
 
 &nbsp;
 
-> Las capturas referenciadas deben colocarse en `./VulnHub/C-1/img/` respetando el nombre indicado en cada imagen. Al final del documento se incluye la tabla de correspondencia con los archivos originales.
-
 &nbsp;
 
 ---
