@@ -114,7 +114,9 @@ El listado reveló, entre otros archivos, `user.txt` y confirmó la existencia d
 
 ![Enumeración del directorio de jangow01](./img/05-rce-listado-home-jangow01.png)
 
-### 2.4. Extracción de credenciales desde la configuración de WordPress
+&nbsp;
+
+### 2.3. Extracción de credenciales desde la configuración de WordPress
 
 Encadenando un salto de línea dentro del parámetro vulnerable, se leyó el archivo de configuración de la instalación de WordPress presente en el servidor:
 
@@ -124,7 +126,7 @@ curl "http://10.0.2.5/site/busque.php?buscar=%0acat%20/var/www/html/site/wordpre
 
 El archivo expuso credenciales de base de datos en texto plano: base de datos `desafio02`, usuario `desafio02` y contraseña `abygurl69`.
 
-![Credenciales expuestas en config.php](./img/07-credenciales-wordpress-config.png)
+![Credenciales expuestas en config.php](./img/06-credenciales-wordpress-config.png)
 
 &nbsp;
 
@@ -144,7 +146,7 @@ ftp 10.0.2.5
 
 El acceso se concedió correctamente (`230 Login successful`).
 
-![Acceso al servicio FTP](./img/08-acceso-ftp.png)
+![Acceso al servicio FTP](./img/07-acceso-ftp.png)
 
 &nbsp;
 
@@ -158,7 +160,7 @@ uname -a
 
 El sistema reportó **Ubuntu 16.04.1 LTS** con kernel **4.4.0-31-generic**, una versión vulnerable a CVE-2017-16995.
 
-![Sesión como jangow01 y versión de kernel](./img/10-sesion-jangow01-kernel.png)
+![Sesión como jangow01 y versión de kernel](./img/09-sesion-jangow01-kernel.png)
 
 &nbsp;
 
@@ -178,7 +180,7 @@ searchsploit -m linux/local/45010.c
 
 El exploit corresponde a **CVE-2017-16995**, una vulnerabilidad de escalada local de privilegios en el verificador de eBPF del kernel Linux, afectando a versiones anteriores a la 4.13.9 (Ubuntu 16.04 / Fedora 27).
 
-![Localización del exploit de kernel](./img/09-searchsploit-kernel.png)
+![Localización del exploit de kernel](./img/08-searchsploit-kernel.png)
 
 &nbsp;
 
@@ -191,7 +193,7 @@ gcc bash.c -o out
 ./out
 ```
 
-![Compilación y ejecución del exploit](./img/11-compilacion-exploit.png)
+![Compilación y ejecución del exploit](./img/10-compilacion-exploit.png)
 
 &nbsp;
 
@@ -208,7 +210,7 @@ ls /root
 cat /root/proof.txt
 ```
 
-![Bandera final como root](./img/12-root-flag-final.png)
+![Bandera final como root](./img/11-root-flag-final.png)
 
 &nbsp;
 
@@ -220,7 +222,7 @@ cat /root/proof.txt
 
 | Bandera | Ubicación | Método de obtención |
 | :-- | :-- | :-- |
-| user.txt | `/home/jangow01/user.txt` | Lectura vía inyección de comandos en `busque.php` |
+| user.txt | `/home/jangow01/user.txt` | Localizada vía inyección de comandos en `busque.php` |
 | proof.txt | `/root/proof.txt` | Obtenida tras la escalada de privilegios mediante CVE-2017-16995 |
 
 &nbsp;
@@ -257,4 +259,3 @@ cat /root/proof.txt
 ---
 
 &nbsp;
-
