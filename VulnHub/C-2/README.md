@@ -297,22 +297,3 @@ cat final-flag.txt
 
 &nbsp;
 
-## Correspondencia de capturas
-
-| Nombre sugerido | Captura original |
-| :-- | :-- |
-| 01-nmap-scan.png | Screenshot_2026-10-17_004032.png |
-| 02-ping-dc2.png | Screenshot_2026-10-17_005053.png |
-| 03-sitio-wordpress-flag1.png | Screenshot_2026-10-17_010048.png |
-| 04-cewl-wordlist.png | Screenshot_2026-10-17_012413.png |
-| 05-wpscan-enumeracion.png | Screenshot_2026-10-17_012454.png |
-| 06-wpscan-usuarios.png | Screenshot_2026-10-17_012536.png |
-| 07-wpscan-ataque-credenciales.png | Screenshot_2026-10-17_013156.png |
-| 08-xmlrpc-credenciales-obtenidas.png | jjjkjk.png |
-| 09-ssh-tom-rbash.png | Screenshot_2026-10-17_014528.png |
-| 10-flag3-pista-jerry.png | Screenshot_2026-10-17_015142.png |
-| 11-enumeracion-home-directorios.png | Screenshot_2026-10-17_021157.png |
-| 12-flag4-pista-final.png | Screenshot_2026-10-17_021619.png |
-| 13-sudo-l-jerry.png | Screenshot_2026-10-20_011617.png |
-| 14-git-help-config.png | Screenshot_2026-10-20_011645.png |
-| 15-root-flag-final.png | Screenshot_2026-10-20_011707.png |
