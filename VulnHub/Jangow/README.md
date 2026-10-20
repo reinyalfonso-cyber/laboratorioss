@@ -114,10 +114,6 @@ El listado reveló, entre otros archivos, `user.txt` y confirmó la existencia d
 
 ![Enumeración del directorio de jangow01](./img/05-rce-listado-home-jangow01.png)
 
-&nbsp;
-
-&nbsp;
-
 ### 2.4. Extracción de credenciales desde la configuración de WordPress
 
 Encadenando un salto de línea dentro del parámetro vulnerable, se leyó el archivo de configuración de la instalación de WordPress presente en el servidor:
