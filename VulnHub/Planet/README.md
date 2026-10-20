@@ -1,89 +1,157 @@
-# Earth Secure Messaging --- Informe técnico de auditoría
+# Earth Secure Messaging \| Informe Técnico de Auditoría (Enumeración web, cifrado XOR y escalada de privilegios)
 
-> **Estado:** reconocimiento web, acceso al panel como `terra`,
-> ejecución de comandos como `apache` y análisis de `reset_root`
-> documentados. La escalada final a `root` y la bandera final siguen
-> pendientes de verificación.
+Informe técnico de la evaluación de seguridad Boot2Root realizada sobre
+la máquina **Earth Secure Messaging**, del entorno VulnHub. La
+investigación incluyó el reconocimiento de servicios, la enumeración de
+recursos web, el análisis de pistas relacionadas con el cifrado XOR, el
+acceso al panel administrativo como `terra`, la ejecución de comandos
+como `apache` y el análisis del binario SUID `/usr/bin/reset_root`.
+
+El reconocimiento y varias fases de la investigación están documentados
+mediante capturas. **La escalada final a `root` no se considera
+confirmada** hasta obtener una evidencia que muestre el contexto
+privilegiado en la máquina objetivo y la lectura de la bandera final.
+
+------------------------------------------------------------------------
 
 ## Ficha técnica
 
-  Campo                              Detalle
-  ---------------------------------- ----------------------------------------------
-  Máquina                            Earth Secure Messaging (VulnHub)
-  Objetivo                           `10.0.2.6`
-  Kali                               `10.0.2.15`
-  Dominios                           `earth.local`, `terratest.earth.local`
-  Puertos                            22/SSH, 80/HTTP, 443/HTTPS
-  Servidor web                       Apache 2.4.51 (Fedora), mod_wsgi, Python 3.9
-  Usuario del panel                  `terra`
-  Usuario de ejecución de comandos   `apache`
-  Binario SUID investigado           `/usr/bin/reset_root`
+  -----------------------------------------------------------------------
+  Campo                               Detalle
+  ----------------------------------- -----------------------------------
+  Nombre de la máquina                Earth Secure Messaging
 
-## Resumen de la cadena
+  Plataforma                          VulnHub
+
+  Dirección IP del objetivo           `10.0.2.6`
+
+  Dirección IP de Kali Linux          `10.0.2.15`
+
+  Dominios identificados              `earth.local`,
+                                      `terratest.earth.local`
+
+  Sistema / servidor web identificado Fedora, Apache httpd 2.4.51,
+                                      mod_wsgi/4.7.1, Python 3.9
+
+  Puertos expuestos                   `22/tcp` (SSH), `80/tcp` (HTTP),
+                                      `443/tcp` (HTTPS)
+
+  Usuario del panel administrativo    `terra`
+
+  Usuario efectivo de la CLI web      `apache`
+
+  Binario SUID investigado            `/usr/bin/reset_root`
+
+  Técnicas principales                Nmap, Gobuster, análisis de XOR,
+                                      enumeración SUID y `ltrace`
+
+  Objetivo del ejercicio              Investigar el acceso inicial y
+                                      verificar si es posible escalar
+                                      privilegios hasta `root`
+  -----------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+## Resumen de la cadena de investigación
 
   -----------------------------------------------------------------------
   Fase                    Técnica                 Resultado
   ----------------------- ----------------------- -----------------------
-  Reconocimiento          Nmap                    Identificados SSH, HTTP
-                                                  y HTTPS
+  Reconocimiento          Escaneo de servicios    Identificación de SSH,
+                          con `nmap`              HTTP y HTTPS en el
+                                                  objetivo
 
-  Enumeración web         Gobuster, `robots.txt`  Encontrados `/admin/` y
-                                                  recursos de prueba
+  Enumeración web         `gobuster` y revisión   Identificación del
+                          de `robots.txt`         panel `/admin/` y
+                                                  recursos adicionales
 
-  Análisis de pistas      `testingnotes.txt`,     Las notas mencionan XOR
-                          `testdata.txt`          y el uso de
-                                                  `testdata.txt` en
-                                                  pruebas
+  Análisis de pistas      Revisión de             Las notas mencionan el
+                          `testingnotes.txt` y    uso de XOR y de
+                          `testdata.txt`          `testdata.txt` durante
+                                                  las pruebas
 
-  Acceso web              Panel `/admin/`         Acceso como `terra`
+  Análisis de mensajes    Inspección del HTML y   Se identificaron
+                          de cadenas              mensajes cifrados; el
+                          hexadecimales           resultado del
+                                                  descifrado debe
+                                                  verificarse
 
-  Ejecución de comandos   CLI administrativa      `whoami` devuelve
+  Acceso administrativo   Inicio de sesión en     Acceso al panel como
+                          `/admin/`               `terra`
+
+  Ejecución de comandos   CLI del panel y comando Confirmación del
+                          `whoami`                usuario efectivo
                                                   `apache`
 
-  Enumeración local       Búsqueda SUID           Encontrado
-                                                  `/usr/bin/reset_root`
+  Enumeración local       Búsqueda de binarios    Identificación de
+                          SUID                    `/usr/bin/reset_root`
 
-  Análisis                Copia a Kali, `ltrace`  Se observan tres rutas
-  estático/dinámico                               comprobadas por
-                                                  `access()`
+  Análisis del binario    Transferencia a Kali y  Identificación de tres
+                          ejecución de `ltrace`   rutas comprobadas
+                                                  mediante `access()`
 
-  Escalada final          Verificación de         Pendiente; no se ha
-                          desencadenantes         confirmado `root`
+  Escalada de privilegios Verificación de         Pendiente de
+                          desencadenantes y nueva confirmación; el
+                          ejecución               binario había indicado
+                                                  que faltaban
+                                                  desencadenantes
   -----------------------------------------------------------------------
 
-## 1. Reconocimiento
+------------------------------------------------------------------------
 
-### 1.1 Nmap
+## 1. Reconocimiento y enumeración de servicios
 
-Comando utilizado:
+### 1.1. Escaneo de puertos
+
+Se ejecutó un escaneo de detección de servicios contra el objetivo:
 
 ``` bash
 nmap -sCV 10.0.2.6
 ```
 
-Servicios observados: - `22/tcp`: OpenSSH 8.6. - `80/tcp`: Apache httpd
-2.4.51 (Fedora), mod_wsgi/4.7.1, Python 3.9. - `443/tcp`: Apache httpd
-2.4.51 (Fedora), mod_wsgi/4.7.1, Python 3.9.
+El resultado identificó los siguientes servicios:
 
-El certificado TLS incluye `earth.local` y `terratest.earth.local`.
+  -----------------------------------------------------------------------
+  Puerto                  Estado                  Servicio / información
+  ----------------------- ----------------------- -----------------------
+  `22/tcp`                Abierto                 OpenSSH 8.6
 
-**Captura:** `01-nmap-servicios.png`
+  `80/tcp`                Abierto                 Apache httpd 2.4.51
+                                                  (Fedora),
+                                                  mod_wsgi/4.7.1, Python
+                                                  3.9
 
-### 1.2 Enumeración de directorios
+  `443/tcp`               Abierto                 HTTPS sobre Apache
+                                                  httpd 2.4.51 (Fedora),
+                                                  mod_wsgi/4.7.1, Python
+                                                  3.9
+  -----------------------------------------------------------------------
+
+El certificado TLS presentó los nombres DNS `earth.local` y
+`terratest.earth.local`.
+
+![Escaneo de servicios con Nmap](./evidencias/01-nmap-servicios.png)
+
+### 1.2. Enumeración de rutas web
+
+Se enumeraron directorios y archivos en ambos dominios:
 
 ``` bash
 gobuster dir -u https://earth.local -w /usr/share/wordlists/dirb/common.txt -k
 gobuster dir -u https://terratest.earth.local -w /usr/share/wordlists/dirb/common.txt -k
 ```
 
-Se encontró `/admin/` en `earth.local`; también se identificaron
-recursos como `robots.txt` e `index.html` en el segundo dominio.
+En `earth.local` se identificó `/admin/`, que redirige a la ruta del
+panel administrativo, y `cgi-bin/`, que devolvió un código `403`. En
+`terratest.earth.local` se identificaron recursos como `robots.txt` e
+`index.html`, además de rutas restringidas.
 
-**Captura:** `02-gobuster-enumeracion.png`
+![Enumeración de rutas con
+Gobuster](./evidencias/02-gobuster-enumeracion.png)
 
-### 1.3 Archivos de pistas
+### 1.3. Revisión de `robots.txt` y archivos de prueba
 
-Se consultaron:
+Se consultaron los recursos encontrados:
 
 ``` bash
 curl -k https://terratest.earth.local/robots.txt
@@ -91,84 +159,156 @@ curl -k https://terratest.earth.local/testingnotes.txt
 curl -k https://terratest.earth.local/testdata.txt
 ```
 
-`testingnotes.txt` menciona XOR, indica que `testdata.txt` se usó para
-probar el cifrado y señala que `terra` es el usuario del panel. La
-página principal contiene mensajes representados como cadenas
+Las notas de pruebas indican que el sistema utiliza XOR y que
+`testdata.txt` se empleó para probar el cifrado. También identifican
+`terra` como el nombre de usuario del panel administrativo. La página
+principal contiene mensajes representados mediante cadenas
 hexadecimales.
 
-**Capturas:** `03-robots-txt.png`, `04-testingnotes.png`,
-`05-testdata.png`, `06-mensajes-cifrados.png`.
+![Contenido de robots.txt](./evidencias/03-robots-txt.png)
 
-### 1.4 Análisis XOR
+![Notas de pruebas de la aplicación](./evidencias/04-testingnotes.png)
 
-Para documentar correctamente el descifrado deben conservarse la cadena
-hexadecimal de entrada, la clave exacta, la codificación y el resultado
-legible. Las capturas disponibles no bastan para afirmar una contraseña
-concreta sin verificar el resultado. No se debe publicar una credencial
-en claro en la versión pública del informe.
+![Contenido de testdata.txt](./evidencias/05-testdata.png)
 
-**Captura prevista:** `07-descifrado-xor.png` (añadir cuando el
-descifrado sea reproducible).
+### 1.4. Análisis de los mensajes cifrados
 
-## 2. Panel administrativo
+Se guardó el HTML de la página principal para examinar las cadenas
+hexadecimales:
 
-Se accedió a `https://earth.local/admin/` como `terra`. En la
-herramienta CLI se ejecutó:
+``` bash
+curl -k https://earth.local/ -o pagina-principal.html
+```
+
+Las notas apuntan a XOR como algoritmo utilizado. Para considerar el
+descifrado demostrado, es necesario registrar la cadena de entrada, la
+clave exacta, la representación de los bytes y una salida legible
+reproducible. Las evidencias disponibles muestran las pistas y los
+mensajes cifrados, pero no bastan por sí solas para confirmar una
+contraseña concreta.
+
+![Mensajes cifrados de la página
+principal](./evidencias/06-mensajes-cifrados.png)
+
+![Análisis XOR](./evidencias/07-analisis-xor.png)
+
+------------------------------------------------------------------------
+
+## 2. Acceso al panel administrativo
+
+### 2.1. Inicio de sesión como `terra`
+
+Se accedió a:
+
+``` text
+https://earth.local/admin/
+```
+
+El panel requiere autenticación. El usuario utilizado fue `terra`, de
+acuerdo con la pista encontrada en los recursos de prueba. No se
+incluyen contraseñas en claro en este informe.
+
+![Inicio de sesión del panel
+administrativo](./evidencias/08-login-admin.png)
+
+### 2.2. Confirmación del usuario efectivo
+
+Desde la herramienta **Admin Command Tool** se ejecutó:
 
 ``` bash
 whoami
 ```
 
-Resultado:
+La salida fue:
 
 ``` text
 apache
 ```
 
-Esto confirma que la ejecución de comandos desde el panel se realiza
+Esto confirma que los comandos enviados desde la CLI web se ejecutan
 como el usuario de servicio `apache`, no como `root`.
 
-**Capturas:** `08-login-admin.png`, `09-cli-whoami-apache.png`.
+![Confirmación de ejecución como
+apache](./evidencias/09-cli-whoami-apache.png)
 
-## 3. Enumeración de SUID
+------------------------------------------------------------------------
 
-Comando utilizado:
+## 3. Enumeración local y análisis de SUID
+
+### 3.1. Enumeración de binarios SUID
+
+Se ejecutó la búsqueda de archivos con el bit SUID:
 
 ``` bash
 find / -type f -perm -4000 -ls 2>/dev/null
 ```
 
-La lista incluía `/usr/bin/sudo`, `/usr/bin/pkexec`, `/usr/bin/passwd`,
-`/usr/bin/su` y `/usr/bin/reset_root`. El binario investigado fue
-`/usr/bin/reset_root`, propiedad de `root` y con el bit SUID.
+Entre los resultados aparecieron binarios del sistema como `sudo`,
+`pkexec`, `passwd`, `su` y el ejecutable personalizado
+`/usr/bin/reset_root`.
 
-Al ejecutarlo, mostró:
+El binario `reset_root` llamó la atención porque pertenece a `root` y
+tiene habilitado el bit SUID. Esto justifica analizar su comportamiento,
+pero no demuestra por sí solo que sea explotable.
+
+![Enumeración de binarios SUID](./evidencias/10-suid-enumeracion.png)
+
+### 3.2. Ejecución inicial de `reset_root`
+
+Se ejecutó:
+
+``` bash
+/usr/bin/reset_root
+```
+
+El programa mostró:
 
 ``` text
 CHECKING IF RESET TRIGGERS PRESENT...
 RESET FAILED, ALL TRIGGERS ARE NOT PRESENT.
 ```
 
-**Capturas:** `10-suid-enumeracion.png`, `11-reset-root-fallo.png`.
+Por tanto, la ejecución inicial no restableció la contraseña de `root`.
+
+![Ejecución inicial fallida de
+reset_root](./evidencias/11-reset-root-fallo.png)
+
+------------------------------------------------------------------------
 
 ## 4. Transferencia y análisis de `reset_root`
 
-Se abrió un listener en Kali para recibir el archivo:
+### 4.1. Recepción del binario en Kali
+
+Se preparó un listener en Kali para recibir el archivo:
 
 ``` bash
 nc -lvnp 3333 > reset_root
 ```
 
-La conexión observada procedía de `10.0.2.6`. Se verificó el archivo
-recibido con `file`, `ls -lh` y `readelf -h`.
+La salida del listener confirmó una conexión procedente de `10.0.2.6`.
+Tras la transferencia, el archivo debe validarse en Kali:
 
-Después se analizó la copia con:
+``` bash
+file reset_root
+ls -lh reset_root
+readelf -h reset_root
+```
+
+La transferencia solo se considera verificada si el archivo tiene tamaño
+no nulo y las herramientas reconocen su formato ELF.
+
+![Transferencia de reset_root a
+Kali](./evidencias/12-transferencia-reset-root.png)
+
+### 4.2. Análisis con `ltrace`
+
+Se ejecutó el análisis de llamadas a bibliotecas:
 
 ``` bash
 ltrace ./reset_root
 ```
 
-La salida mostró estas comprobaciones:
+La salida observada fue:
 
 ``` text
 access("/dev/shm/kHgTFI5G", 0) = -1
@@ -176,61 +316,137 @@ access("/dev/shm/Zw7bV9U5", 0) = -1
 access("/tmp/kcM0Wewe", 0) = -1
 ```
 
-Las rutas deben respetarse exactamente, incluidos mayúsculas y
-minúsculas. En una prueba anterior se había utilizado `/tmp/kcM0Wew`,
-que no coincide con `/tmp/kcM0Wewe`.
+El resultado muestra que la copia analizada comprobó tres rutas y que
+las tres llamadas a `access()` fallaron durante esa ejecución.
 
-**Importante:** `ltrace` se ejecutó en la copia de Kali. Para confirmar
-el comportamiento en Earth hay que comprobar las rutas en el sistema
-objetivo y validar el resultado allí. La salida actual no demuestra que
-se haya obtenido `root`.
+![Rutas comprobadas por ltrace](./evidencias/13-ltrace-rutas.png)
 
-**Capturas:** `12-transferencia-reset-root.png`, `13-ltrace-rutas.png`,
-`14-verificacion-rutas.png`.
+### 4.3. Interpretación de las rutas
 
-## 5. Estado de la escalada
+Las rutas que aparecen en la salida deben copiarse literalmente:
 
-La escalada final no debe darse por completada hasta capturar: - `id`
-mostrando `uid=0(root)`. - La lectura de la bandera final en Earth. -
-Evidencia que permita distinguir la sesión del objetivo de la máquina
-Kali.
+  N.º   Ruta observada
+  ----- ---------------------
+  1     `/dev/shm/kHgTFI5G`
+  2     `/dev/shm/Zw7bV9U5`
+  3     `/tmp/kcM0Wewe`
 
-**Capturas pendientes:** `15-root-confirmacion.png`, `16-root-flag.png`.
+En una comprobación anterior se había utilizado `/tmp/kcM0Wew`, que no
+coincide con la ruta completa mostrada por `ltrace`. Aun así, crear
+archivos con esos nombres no basta para afirmar que el programa
+funcionará: también debe comprobarse que el binario de Earth usa las
+mismas rutas y que el proceso puede ver los archivos.
 
-## 6. Hallazgos y recomendaciones
+**Nota:** `ltrace` se ejecutó sobre una copia en Kali. La salida
+describe esa ejecución; debe contrastarse con el comportamiento del
+binario original en Earth.
+
+![Verificación de las rutas en
+Earth](./evidencias/14-verificacion-rutas.png)
+
+------------------------------------------------------------------------
+
+## 5. Estado de la escalada de privilegios
+
+La escalada final a `root` todavía no está confirmada por las evidencias
+disponibles. Para cerrar esta fase, el informe debe incluir una
+comprobación ejecutada en el objetivo que muestre el contexto
+privilegiado, por ejemplo, la salida de `id` con `uid=0(root)`, y la
+evidencia de lectura de la bandera final.
+
+Hasta que esas pruebas existan, el resultado debe registrarse como
+**pendiente de verificación**, no como compromiso total confirmado.
+
+![Confirmación de root](./evidencias/15-root-confirmacion.png)
+
+![Bandera final](./evidencias/16-root-flag.png)
+
+------------------------------------------------------------------------
+
+## 6. Resumen de resultados
+
+  ------------------------------------------------------------------------------
+  Elemento                Ubicación / evidencia          Estado
+  ----------------------- ------------------------------ -----------------------
+  Servicios SSH, HTTP y   Escaneo Nmap                   Confirmado
+  HTTPS                                                  
+
+  Panel administrativo    `https://earth.local/admin/`   Confirmado
+
+  Pistas de XOR           `robots.txt`,                  Confirmadas
+                          `testingnotes.txt`,            
+                          `testdata.txt`                 
+
+  Acceso como `terra`     Panel administrativo           Confirmado
+
+  Ejecución como `apache` `whoami` en la CLI web         Confirmado
+
+  Binario SUID            `/usr/bin/reset_root`          Confirmado
+  investigado                                            
+
+  Rutas comprobadas por   Copia de `reset_root`          Confirmadas para esa
+  `ltrace`                analizada en Kali              copia
+
+  Escalada a `root`       Evidencia final pendiente      No confirmada
+
+  Bandera final           Evidencia pendiente            No confirmada
+  ------------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+## 7. Causa raíz y recomendaciones
 
   -----------------------------------------------------------------------
-  Hallazgo                            Recomendación
-  ----------------------------------- -----------------------------------
-  Panel web con capacidad de ejecutar Eliminar la ejecución arbitraria de
-  comandos                            comandos y aplicar privilegios
-                                      mínimos
+  Hallazgo                Riesgo / causa          Recomendación
+  ----------------------- ----------------------- -----------------------
+  Panel web con capacidad Una interfaz web que    Eliminar la ejecución
+  de ejecutar comandos    permite ejecutar        arbitraria de comandos;
+                          comandos puede ampliar  si una función
+                          el impacto de fallos de administrativa la
+                          autenticación o         requiere, usar una
+                          autorización            lista permitida y
+                                                  privilegios mínimos
 
-  Recursos de pruebas y notas         Retirar archivos de desarrollo del
-  accesibles públicamente             entorno publicado
+  Recursos de pruebas     Las notas y los datos   Retirar archivos de
+  expuestos               de prueba revelan       desarrollo y pruebas de
+                          detalles de             los entornos publicados
+                          implementación y pueden 
+                          facilitar el análisis   
+                          de la aplicación        
 
-  Uso de XOR para proteger mensajes   Usar criptografía autenticada
-                                      moderna y gestión segura de claves
+  Uso de XOR para         XOR sin un diseño       Utilizar criptografía
+  proteger mensajes       criptográfico robusto   autenticada moderna y
+                          no proporciona          una gestión segura de
+                          protección adecuada por claves
+                          sí solo                 
 
-  Binario personalizado SUID          Retirar SUID si no es
-                                      imprescindible y auditar su
-                                      implementación
+  Binario personalizado   Un fallo en un programa Eliminar SUID si no es
+  con SUID                privilegiado puede      imprescindible, auditar
+                          permitir escalada de    el código y reducir las
+                          privilegios             operaciones
+                                                  privilegiadas
 
-  Servicios y sistema operativo       Aplicar parches y mantener
-                                      inventario de versiones
+  Servicios que requieren Versiones antiguas      Mantener el sistema y
+  mantenimiento           pueden contener         los servicios
+                          vulnerabilidades        actualizados y revisar
+                          conocidas               periódicamente su
+                                                  configuración
   -----------------------------------------------------------------------
 
-## 7. Lecciones aprendidas
+------------------------------------------------------------------------
 
--   La enumeración de subdominios y recursos puede revelar pistas no
-    enlazadas desde la página principal.
--   Los datos hexadecimales requieren identificar correctamente formato,
-    clave y algoritmo.
--   `whoami` permite confirmar el contexto de ejecución de la CLI web.
--   Un binario SUID debe investigarse por su comportamiento real; su
-    nombre no demuestra que sea vulnerable.
--   La salida de `ltrace` de una copia en Kali debe contrastarse con el
-    sistema objetivo.
--   Un informe debe separar hechos confirmados, hipótesis y pasos
-    pendientes.
+## 8. Lecciones aprendidas
 
+-   La enumeración de dominios, rutas y archivos auxiliares puede
+    revelar información que no aparece en la página principal.
+-   Los mensajes hexadecimales requieren identificar correctamente el
+    formato, la clave y el funcionamiento real del algoritmo antes de
+    dar por válido un descifrado.
+-   `whoami` permite confirmar el usuario efectivo con el que se
+    ejecutan los comandos del panel.
+-   La presencia de un binario SUID requiere investigación, pero no
+    demuestra por sí sola que exista una vulnerabilidad explotable.
+-   Los resultados de `ltrace` obtenidos en Kali deben contrastarse con
+    el comportamiento del binario en el objetivo.
+-   Un informe de auditoría debe distinguir entre hallazgos confirmados,
+    hipótesis y fases pendientes de validación.
